@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Математический блокнот v4</title>
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']],displayMath:[['\\[','\\]']]},svg:{fontCache:'none'}};</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.7.0/math.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{display:flex;flex-direction:column;height:100vh;font-family:'Segoe UI',Tahoma,sans-serif}
+.toolbar{padding:10px;background:#2c3e50;color:#fff;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button{background:#3498db;border:0;color:#fff;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:14px}
+button:hover{background:#2980b9}
+button.green{background:#27ae60}
+.container{display:flex;flex:1;overflow:hidden}
+.editor{flex:1;display:flex;border-right:1px solid #bdc3c7}
+.preview{flex:1;overflow:auto;padding:20px;background:#fef9e7}
+textarea{flex:1;font:14px/1.5 'Courier New',monospace;padding:15px;border:0;resize:none;outline:0}
+#preview{max-width:900px;margin:0 auto;font-size:16px;line-height:1.6}
+.status{padding:4px 10px;background:#ecf0f1;font-size:12px;color:#2c3e50;border-top:1px solid #bdc3c7}
+.plot{margin:12px 0;text-align:center;break-inside:avoid}
+.plot svg{max-width:100%;height:auto}
+.legend{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;font-size:14px;margin-top:4px}
+.legend i{display:inline-block;width:18px;height:3px;margin-right:6px;vertical-align:middle}
+dialog{margin:auto;padding:18px;border:1px solid #bdc3c7;border-radius:8px;width:min(560px,94vw)}
+dialog label{display:block;font-size:12px;font-weight:bold;color:#2c3e50;margin-top:8px}
+dialog input{width:100%;padding:6px 8px;font:14px 'Courier New',monospace;border:1px solid #bdc3c7;border-radius:4px}
+dialog .row{display:flex;gap:10px;margin-top:10px}
+#gprev{margin-top:10px;min-height:20px}
+@page{size:A4;margin:15mm}
+@media print{
+ html,body{height:auto!important;overflow:visible!important;display:block!important}
+ .toolbar,.editor,.status,dialog{display:none!important}
+ .container{display:block!important;height:auto!important;overflow:visible!important}
+ .preview{display:block!important;overflow:visible!important;padding:0!important;background:#fff!important}
+ #preview{max-width:none!important}
+ mjx-container[display="true"],table,.plot,pre,li{break-inside:avoid}
+ h1,h2,h3{break-after:avoid}
+ .pb{break-after:page}
+ *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+ <button onclick="saveFile()">💾 Сохранить</button>
+ <button onclick="loadFile()">📂 Загрузить</button>
+ <button onclick="newFile()">📄 Новый</button>
+ <button class="green" onclick="openDlg()">📈 График</button>
+ <button onclick="toPDF()">📑 PDF</button>
+ <span style="flex:1"></span>
+ <span style="font-size:13px">HTML + LaTeX: \(...\) и \[...\] · разрыв страницы: &lt;div class="pb"&gt;&lt;/div&gt;</span>
+</div>
+<div class="container">
+ <div class="editor"><textarea id="source" spellcheck="false"></textarea></div>
+ <div class="preview"><div id="preview"></div></div>
+</div>
+<div class="status" id="status">Готово</div>
+
+<dialog id="dlg">
+ <h3>📈 Вставить график</h3>
+ <label>Функции y = f(x), через «;»<input id="gf" value="sin(x)*3; x^2/4"></label>
+ <label>Неявные F(x,y) = G, через «;»<input id="ge" placeholder="x^2/16 + y^2/9 = 1"></label>
+ <label>Параметрические: x(t), y(t) [, t от, t до]<input id="gp" placeholder="5*cos(t), 5*sin(t)"></label>
+ <div class="row">
+  <label style="flex:1">x от, до<input id="gx" value="-6,6"></label>
+  <label style="flex:1">y от, до<input id="gy" value="-6,6"></label>
+ </div>
+ <div id="gprev"></div>
+ <div class="row"><button class="green" onclick="gInsert()">Вставить в текст</button><button onclick="dlg.close()">Закрыть</button></div>
+</dialog>
+
+<script>
+const $=id=>document.getElementById(id), src=$('source'), pv=$('preview'), st=$('status');
+const COL=['#3498db','#e74c3c','#27ae60','#f39c12','#9b59b6','#16a085'];
+let uid=0;
+
+/* ---------- графики (inline SVG) ---------- */
+const nice=(a,b)=>{const r=(b-a)/8,p=10**Math.floor(Math.log10(r)),m=r/p;return p*(m<1.5?1:m<3?2:m<7?5:10)};
+const fmt=v=>String(+v.toPrecision(6));
+function ev(c,s){try{const v=c.evaluate(s);return typeof v==='number'&&isFinite(v)&&Math.abs(v)<1e9?v:null}catch(e){return null}}
+function lab(pre,...ss){try{return '\\('+pre+ss.map(s=>math.parse(s).toTex()).join('=')+'\\)'}catch(e){return pre+ss.join('=')}}
+
+function plotSVG(o){
+ const W=640,H=400,L=44,R=14,T=12,B=30,[x0,x1]=o.x,[y0,y1]=o.y,id='c'+(uid++);
+ const X=x=>(L+(x-x0)/(x1-x0)*(W-L-R)).toFixed(1), Y=y=>(T+(y1-y)/(y1-y0)*(H-T-B)).toFixed(1);
+ let s=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,sans-serif" font-size="11"><clipPath id="${id}"><rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}"/></clipPath><rect width="${W}" height="${H}" fill="#fff"/>`;
+ const sx=nice(x0,x1), sy=nice(y0,y1);
+ for(let v=Math.ceil(x0/sx)*sx;v<=x1+1e-9;v+=sx)s+=`<line x1="${X(v)}" y1="${T}" x2="${X(v)}" y2="${H-B}" stroke="#e5e5e5"/><text x="${X(v)}" y="${H-B+14}" text-anchor="middle" fill="#555">${fmt(v)}</text>`;
+ for(let v=Math.ceil(y0/sy)*sy;v<=y1+1e-9;v+=sy)s+=`<line x1="${L}" y1="${Y(v)}" x2="${W-R}" y2="${Y(v)}" stroke="#e5e5e5"/><text x="${L-5}" y="${+Y(v)+4}" text-anchor="end" fill="#555">${fmt(v)}</text>`;
+ if(y0<0&&y1>0)s+=`<line x1="${L}" y1="${Y(0)}" x2="${W-R}" y2="${Y(0)}" stroke="#333"/>`;
+ if(x0<0&&x1>0)s+=`<line x1="${X(0)}" y1="${T}" x2="${X(0)}" y2="${H-B}" stroke="#333"/>`;
+ s+=`<rect x="${L}" y="${T}" width="${W-L-R}" height="${H-T-B}" fill="none" stroke="#999"/><g clip-path="url(#${id})" fill="none" stroke-width="2">`;
+ let k=0; const leg=[];
+ const poly=(pts,col)=>{let d='',pen=false;for(const q of pts){if(!q){pen=false;continue}d+=(pen?'L':'M')+X(q[0])+' '+Y(q[1]);pen=true}s+=`<path d="${d}" stroke="${col}"/>`};
+ for(const f of o.f){ // y=f(x), разрыв на асимптотах
+  const c=math.compile(f),col=COL[k++%6],N=800,pts=[];let prev=null;
+  for(let i=0;i<=N;i++){const x=x0+i*(x1-x0)/N,y=ev(c,{x});
+   if(y===null||(prev!==null&&Math.abs(y-prev)>(y1-y0)*3))pts.push(null);
+   pts.push(y===null?null:[x,y]);prev=y}
+  poly(pts,col);leg.push([col,lab('y=',f)]);
+ }
+ for(const [px,py,ta,tb] of o.p){ // параметрические
+  const cx=math.compile(px),cy=math.compile(py),col=COL[k++%6],N=800,pts=[];
+  const t0=ta?math.evaluate(ta):0,t1=tb?math.evaluate(tb):2*Math.PI;
+  for(let i=0;i<=N;i++){const t=t0+i*(t1-t0)/N,a=ev(cx,{t}),b=ev(cy,{t});pts.push(a===null||b===null?null:[a,b])}
+  poly(pts,col);leg.push([col,lab('x=',px)+', '+lab('y=',py)]);
+ }
+ for(const e of o.eq){ // неявные: marching squares
+  const [l,r]=e.split('='),c=math.compile(`(${l})-(${r||'0'})`),col=COL[k++%6],G=140,dx=(x1-x0)/G,dy=(y1-y0)/G,v=[];
+  for(let j=0;j<=G;j++){v[j]=[];for(let i=0;i<=G;i++)v[j][i]=ev(c,{x:x0+i*dx,y:y0+j*dy})}
+  let d='';
+  for(let j=0;j<G;j++)for(let i=0;i<G;i++){
+   const a=v[j][i],b=v[j][i+1],cc=v[j+1][i+1],dd=v[j+1][i];
+   if(a===null||b===null||cc===null||dd===null)continue;
+   const X0=x0+i*dx,Y0=y0+j*dy,q=[];
+   const cr=(u,w,fn)=>{if((u<0)!==(w<0))q.push(fn(u/(u-w)))};
+   cr(a,b,t=>[X0+t*dx,Y0]);cr(b,cc,t=>[X0+dx,Y0+t*dy]);cr(dd,cc,t=>[X0+t*dx,Y0+dy]);cr(a,dd,t=>[X0,Y0+t*dy]);
+   for(let m=0;m+1<q.length;m+=2)d+=`M${X(q[m][0])} ${Y(q[m][1])}L${X(q[m+1][0])} ${Y(q[m+1][1])}`;
+  }
+  s+=`<path d="${d}" stroke="${col}"/>`;leg.push([col,lab('',l,r||'0')]);
+ }
+ s+='</g></svg>';
+ return s+'<div class="legend">'+leg.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join('')+'</div>';
+}
+
+function renderPlots(root){
+ root.querySelectorAll('plot').forEach(el=>{
+  const div=document.createElement('div');div.className='plot';
+  try{
+   const A=a=>(el.getAttribute(a)||'').split(';').map(s=>s.trim()).filter(Boolean);
+   const R=(a,d)=>(el.getAttribute(a)||d).split(',').map(s=>math.evaluate(s));
+   div.innerHTML=plotSVG({f:A('f'),eq:A('eq'),p:A('p').map(s=>s.split(',').map(z=>z.trim())),x:R('x','-10,10'),y:R('y','-10,10')});
+  }catch(e){div.innerHTML='<span style="color:#c0392b">Ошибка графика: '+e.message+'</span>'}
+  el.replaceWith(div);
+ });
+}
+
+/* ---------- предпросмотр ---------- */
+function typeset(el){
+ return (window.MathJax&&MathJax.startup&&MathJax.startup.promise)
+  ? MathJax.startup.promise.then(()=>MathJax.typesetPromise([el])).catch(console.error)
+  : Promise.resolve();
+}
+function update(){pv.innerHTML=src.value;renderPlots(pv);return typeset(pv)}
+function status(m){st.textContent=m;setTimeout(()=>{if(st.textContent===m)st.textContent='Готово'},2000)}
+let tm;
+src.addEventListener('input',()=>{clearTimeout(tm);tm=setTimeout(update,300);try{localStorage.setItem('mn4',src.value)}catch(e){}});
+
+/* ---------- файлы ---------- */
+function saveFile(){
+ const a=document.createElement('a'),u=URL.createObjectURL(new Blob([src.value],{type:'text/html'}));
+ a.href=u;a.download='notebook_'+new Date().toISOString().slice(0,10)+'.html';
+ document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(u);status('Файл сохранён');
+}
+function loadFile(){
+ const i=document.createElement('input');i.type='file';i.accept='.html,.htm,.txt,.tex';
+ i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=ev=>{src.value=ev.target.result;update();status('Загружено: '+f.name)};r.readAsText(f)};
+ i.click();
+}
+function newFile(){if(!src.value.trim()||confirm('Создать новый документ? Несохранённое будет потеряно.')){src.value='';update()}}
+
+/* ---------- PDF: печатаем сам документ, DOM не трогаем ---------- */
+async function toPDF(){await update();status('В окне печати выберите «Сохранить как PDF»');window.print()}
+
+/* ---------- диалог графика ---------- */
+const esc=s=>s.replace(/"/g,'&quot;');
+function tag(){
+ const at=(n,v)=>v.trim()?` ${n}="${esc(v.trim())}"`:'';
+ return `<plot${at('f',$('gf').value)}${at('eq',$('ge').value)}${at('p',$('gp').value)}${at('x',$('gx').value)}${at('y',$('gy').value)}></plot>`;
+}
+let gt;
+function gPrev(){clearTimeout(gt);gt=setTimeout(()=>{$('gprev').innerHTML=tag();renderPlots($('gprev'));typeset($('gprev'))},250)}
+['gf','ge','gp','gx','gy'].forEach(i=>$(i).addEventListener('input',gPrev));
+function openDlg(){dlg.showModal();gPrev()}
+function gInsert(){
+ const t='\n'+tag()+'\n',a=src.selectionStart;
+ src.value=src.value.slice(0,a)+t+src.value.slice(src.selectionEnd);
+ src.selectionStart=src.selectionEnd=a+t.length;dlg.close();src.focus();update();
+}
+
+/* ---------- старт ---------- */
+const DEFAULT=String.raw`<h2>📐 Математический блокнот v4</h2>
+<p>Пишите HTML и LaTeX: \(E = mc^2\). Отдельные формулы так:</p>
+\[ x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a} \]
+<p>Графики — обычным тегом прямо в тексте (кнопка «📈 График» вставит его сама). Функции:</p>
+<plot f="sin(x)*3; x^2/4" x="-6,6" y="-5,8"></plot>
+<p>Неявная кривая (эллипс) и параметрическая (окружность):</p>
+<plot eq="x^2/16 + y^2/9 = 1" p="3*cos(t), 3*sin(t)" x="-6,6" y="-4,4"></plot>
+<p><em>Всё это сохраняется в файле и печатается в PDF векторно.</em></p>`;
+let saved=null;try{saved=localStorage.getItem('mn4')}catch(e){}
+src.value=saved||DEFAULT;
+window.addEventListener('load',update);
+</script>
+</body>
+</html>
