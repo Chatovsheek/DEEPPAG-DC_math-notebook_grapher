@@ -2,6 +2,9 @@
 *DEEPPAG-DC math notebook with grapher*
 
 
+🌐 **Онлайн-версия:** [chatovsheek.github.io/DEEPPAG-DC_math-notebook_grapher](https://chatovsheek.github.io/DEEPPAG-DC_math-notebook_grapher/)
+
+
              * МАТЕМАТИЧЕСКИЙ БЛОКНОТ v4 — краткая инструкция *
 
 
